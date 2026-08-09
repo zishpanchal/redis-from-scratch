@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"strconv"
@@ -127,4 +128,56 @@ func (r *Resp) readLine() (line []byte, bytesRead int, err error) {
 			return line[:len(line)-2], bytesRead, nil
 		}
 	}
+}
+
+// Marshal encodes a Value using the RESP wire format.
+func (v Value) Marshal() ([]byte, error) {
+	switch v.typ {
+	case "string":
+		return []byte("+" + v.str + "\r\n"), nil
+	case "error":
+		return []byte("-" + v.str + "\r\n"), nil
+	case "integer":
+		return []byte(":" + strconv.Itoa(v.num) + "\r\n"), nil
+	case "bulk":
+		return []byte("$" + strconv.Itoa(len(v.bulk)) + "\r\n" + v.bulk + "\r\n"), nil
+	case "null":
+		return []byte("$-1\r\n"), nil
+	case "array":
+		var encoded bytes.Buffer
+		encoded.WriteByte(ARRAY)
+		encoded.WriteString(strconv.Itoa(len(v.array)))
+		encoded.WriteString("\r\n")
+
+		for i, element := range v.array {
+			data, err := element.Marshal()
+			if err != nil {
+				return nil, fmt.Errorf("marshal array element %d: %w", i, err)
+			}
+			encoded.Write(data)
+		}
+
+		return encoded.Bytes(), nil
+	default:
+		return nil, fmt.Errorf("unsupported value type %q", v.typ)
+	}
+}
+
+// Writer serializes RESP values to a connection or other byte stream.
+type Writer struct {
+	writer io.Writer
+}
+
+func NewWriter(writer io.Writer) *Writer {
+	return &Writer{writer: writer}
+}
+
+func (w *Writer) Write(value Value) error {
+	data, err := value.Marshal()
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(w.writer, bytes.NewReader(data))
+	return err
 }
