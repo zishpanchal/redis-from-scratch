@@ -15,12 +15,20 @@ func main() {
 	defer listener.Close()
 
 	fmt.Println("Listening on port :6379")
+	handler := NewHandler()
 
-	conn, err := listener.Accept()
-	if err != nil {
-		fmt.Println("error accepting connection:", err)
-		return
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("error accepting connection:", err)
+			continue
+		}
+
+		go handleConnection(conn, handler)
 	}
+}
+
+func handleConnection(conn net.Conn, handler *Handler) {
 	defer conn.Close()
 
 	resp := NewResp(conn)
@@ -35,9 +43,8 @@ func main() {
 			return
 		}
 
-		fmt.Printf("received: %#v\n", value)
-
-		if err := writer.Write(Value{typ: "string", str: "OK"}); err != nil {
+		result := handler.Handle(value)
+		if err := writer.Write(result); err != nil {
 			fmt.Println("error writing to client:", err)
 			return
 		}
