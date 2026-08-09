@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -10,10 +11,15 @@ import (
 type Handler struct {
 	stringsMu sync.RWMutex
 	strings   map[string]string
+	hashesMu  sync.RWMutex
+	hashes    map[string]map[string]string
 }
 
 func NewHandler() *Handler {
-	return &Handler{strings: make(map[string]string)}
+	return &Handler{
+		strings: make(map[string]string),
+		hashes:  make(map[string]map[string]string),
+	}
 }
 
 func (h *Handler) Handle(request Value) Value {
@@ -37,6 +43,12 @@ func (h *Handler) Handle(request Value) Value {
 		return h.set(args)
 	case "GET":
 		return h.get(args)
+	case "HSET":
+		return h.hset(args)
+	case "HGET":
+		return h.hget(args)
+	case "HGETALL":
+		return h.hgetall(args)
 	default:
 		return Value{typ: "error", str: fmt.Sprintf("ERR unknown command '%s'", strings.ToLower(command))}
 	}
@@ -78,6 +90,67 @@ func (h *Handler) get(args []Value) Value {
 		return Value{typ: "null"}
 	}
 	return Value{typ: "bulk", bulk: value}
+}
+
+func (h *Handler) hset(args []Value) Value {
+	if len(args) != 3 {
+		return wrongNumberOfArguments("hset")
+	}
+
+	hashName, field, value := args[0].bulk, args[1].bulk, args[2].bulk
+
+	h.hashesMu.Lock()
+	if h.hashes[hashName] == nil {
+		h.hashes[hashName] = make(map[string]string)
+	}
+	_, existed := h.hashes[hashName][field]
+	h.hashes[hashName][field] = value
+	h.hashesMu.Unlock()
+
+	if existed {
+		return Value{typ: "integer", num: 0}
+	}
+	return Value{typ: "integer", num: 1}
+}
+
+func (h *Handler) hget(args []Value) Value {
+	if len(args) != 2 {
+		return wrongNumberOfArguments("hget")
+	}
+
+	h.hashesMu.RLock()
+	value, exists := h.hashes[args[0].bulk][args[1].bulk]
+	h.hashesMu.RUnlock()
+
+	if !exists {
+		return Value{typ: "null"}
+	}
+	return Value{typ: "bulk", bulk: value}
+}
+
+func (h *Handler) hgetall(args []Value) Value {
+	if len(args) != 1 {
+		return wrongNumberOfArguments("hgetall")
+	}
+
+	h.hashesMu.RLock()
+	hash := h.hashes[args[0].bulk]
+	fields := make([]string, 0, len(hash))
+	for field := range hash {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	values := make([]Value, 0, len(hash)*2)
+	for _, field := range fields {
+		values = append(values,
+			Value{typ: "bulk", bulk: field},
+			Value{typ: "bulk", bulk: hash[field]},
+		)
+	}
+	h.hashesMu.RUnlock()
+
+	return Value{typ: "array", array: values}
 }
 
 func allBulkStrings(values []Value) bool {
